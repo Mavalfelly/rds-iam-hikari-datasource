@@ -115,7 +115,6 @@
 				</exclusion>
 			</exclusions>
 		</dependency>
-	<!-- Removed unnecessary test dependencies: spring-boot-starter-data-jpa, postgresql, testcontainers, junit-jupiter -->
 		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-core</artifactId>

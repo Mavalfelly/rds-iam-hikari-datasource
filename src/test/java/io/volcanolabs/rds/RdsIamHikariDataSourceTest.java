@@ -147,10 +147,6 @@ class RdsIamHikariDataSourceTest {
     private MockedStatic<DefaultCredentialsProvider> defaultCredentialsProviderMockedStatic;
     private MockedStatic<DefaultAwsRegionProviderChain> defaultAwsRegionProviderChainMockedStatic;
 
-    @BeforeEach
-    void setUp() {
-    }
-
     @AfterEach
     void tearDown() {
         if (rdsUtilitiesMockedStatic != null) {
@@ -166,7 +162,7 @@ class RdsIamHikariDataSourceTest {
             defaultAwsRegionProviderChainMockedStatic = null;
         }
     }
-    
+
     @Test
     void testGetPasswordReturnsCorrectToken() {
 
