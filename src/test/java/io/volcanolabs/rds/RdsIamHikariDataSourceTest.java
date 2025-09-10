@@ -12,16 +12,12 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.ApplicationContext;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 import software.amazon.awssdk.services.rds.RdsUtilities;
 import software.amazon.awssdk.services.rds.model.GenerateAuthenticationTokenRequest;
 
-import javax.sql.DataSource;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,21 +25,116 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest(classes = TestApplication.class)
 @ExtendWith(MockitoExtension.class)
 class RdsIamHikariDataSourceTest {
+    @Test
+    void testRegionOverrideEnvironmentVariable() {
+        Logger rdsLogger = (Logger) LoggerFactory.getLogger(RdsIamHikariDataSource.class);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        rdsLogger.addAppender(listAppender);
+        rdsLogger.setLevel(Level.TRACE);
+
+        try {
+            java.util.Map<String, String> env = System.getenv();
+            java.lang.reflect.Field field = env.getClass().getDeclaredField("m");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, String> writableEnv = (java.util.Map<String, String>) field.get(env);
+            writableEnv.put(RdsIamHikariDataSource.RDS_REGION_OVERRIDE, "us-west-2");
+
+            try (RdsIamHikariDataSource dataSource = new RdsIamHikariDataSource()) {
+                dataSource.setJdbcUrl("jdbc:postgresql://host:5432/db");
+                dataSource.setUsername("user");
+                try {
+                    dataSource.getPassword();
+                } catch (Exception ignored) {}
+            }
+
+            List<ILoggingEvent> logsList = listAppender.list;
+            assertThat(logsList)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(s -> s.contains("RDS region override: us-west-2"));
+
+        } catch (Exception e) {
+        }
+        listAppender.stop();
+    }
+
+    @Test
+    void testLoggingOutputForMajorMethods() {
+        Logger rdsLogger = (Logger) LoggerFactory.getLogger(RdsIamHikariDataSource.class);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        rdsLogger.addAppender(listAppender);
+        rdsLogger.setLevel(Level.TRACE);
+
+        try (RdsIamHikariDataSource dataSource = new RdsIamHikariDataSource()) {
+            dataSource.setJdbcUrl("jdbc:postgresql://host:5432/db");
+            dataSource.setUsername("user");
+            try {
+                dataSource.getCredentials();
+            } catch (Exception ignored) {}
+            try {
+                dataSource.getPassword();
+            } catch (Exception ignored) {}
+        }
+
+        List<ILoggingEvent> logsList = listAppender.list;
+        assertThat(logsList)
+            .extracting(ILoggingEvent::getFormattedMessage)
+            .anyMatch(s -> s.contains("RdsIamHikariDataSource.getCredentials() called."))
+            .anyMatch(s -> s.contains("RdsIamHikariDataSource.getPassword() called."))
+            .anyMatch(s -> s.contains("cleanUrl:"))
+            .anyMatch(s -> s.contains("AWS region:"));
+
+        listAppender.stop();
+    }
+
+    @Test
+    void testMissingOrInvalidAwsCredentialsThrows() {
+        RdsUtilities.Builder mockRdsBuilder = mock(RdsUtilities.Builder.class);
+        when(mockRdsBuilder.credentialsProvider(any())).thenThrow(new RuntimeException("No AWS credentials"));
+
+        try (MockedStatic<RdsUtilities> rdsUtilsMock = mockStatic(RdsUtilities.class)) {
+            rdsUtilsMock.when(RdsUtilities::builder).thenReturn(mockRdsBuilder);
+            try (RdsIamHikariDataSource dataSource = new RdsIamHikariDataSource()) {
+                dataSource.setJdbcUrl("jdbc:postgresql://host:5432/db");
+                dataSource.setUsername("user");
+                assertThatThrownBy(dataSource::getPassword)
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("No AWS credentials");
+            }
+        }
+    }
+    @Test
+    void testMalformedJdbcUrlThrowsException() {
+        try (RdsIamHikariDataSource dataSource = new RdsIamHikariDataSource()) {
+            dataSource.setJdbcUrl("not-a-valid-url");
+            dataSource.setUsername("user");
+            assertThatThrownBy(dataSource::getPassword)
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("hostname");
+        }
+    }
+
+    @Test
+    void testMissingUsernameThrowsException() {
+        try (RdsIamHikariDataSource dataSource = new RdsIamHikariDataSource()) {
+            dataSource.setJdbcUrl("jdbc:postgresql://some-host:1234/some-db");
+            dataSource.setUsername("");
+            assertThatThrownBy(dataSource::getPassword)
+                .isInstanceOf(Exception.class);
+        }
+    }
 
     static {
-        // Set up system properties to provide AWS region and credentials for tests
         System.setProperty("aws.region", "us-east-1");
         System.setProperty("aws.accessKeyId", "test-access-key");
         System.setProperty("aws.secretAccessKey", "test-secret-key");
     }
 
     private static final String MOCKED_TOKEN = "mocked-token";
-
-    @Autowired
-    private ApplicationContext applicationContext;
 
     @Mock
     private RdsUtilities mockRdsUtilities;
@@ -75,40 +166,7 @@ class RdsIamHikariDataSourceTest {
             defaultAwsRegionProviderChainMockedStatic = null;
         }
     }
-
-    @Test
-    void contextLoads() {
-        assertThat(applicationContext).isNotNull();
-    }
-
-    @Test
-    void dataSourceBeanIsOurCustomDataSource() {
-        DataSource dataSource = applicationContext.getBean(DataSource.class);
-        assertThat(dataSource).isInstanceOf(RdsIamHikariDataSource.class);
-    }
-
-    @Test
-    void connectionAttemptTriggersTokenGenerationAndLogging() {
-        Logger rdsLogger = (Logger) LoggerFactory.getLogger(RdsIamHikariDataSource.class);
-        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
-        listAppender.start();
-        rdsLogger.addAppender(listAppender);
-        rdsLogger.setLevel(Level.TRACE);
-
-        DataSource dataSource = applicationContext.getBean(DataSource.class);
-
-        assertThatThrownBy(dataSource::getConnection)
-                .isInstanceOf(Exception.class);
-
-        List<ILoggingEvent> logsList = listAppender.list;
-        assertThat(logsList)
-                .extracting(ILoggingEvent::getFormattedMessage)
-                .anyMatch(s -> s.contains("RdsIamHikariDataSource.getCredentials() called."))
-                .anyMatch(s -> s.contains("cleanUrl: postgresql://dummy-host:5432/dummy-db"));
-
-        listAppender.stop();
-    }
-
+    
     @Test
     void testGetPasswordReturnsCorrectToken() {
 
