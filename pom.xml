@@ -172,7 +172,11 @@
 					<systemPropertyVariables>
 						<spring.jcl.ignore>true</spring.jcl.ignore>
 						<mockito.disable.class.cache>true</mockito.disable.class.cache>
+						<RDS_REGION_OVERRIDE>us-west-2</RDS_REGION_OVERRIDE>
 					</systemPropertyVariables>
+					<environmentVariables>
+						<RDS_REGION_OVERRIDE>us-west-2</RDS_REGION_OVERRIDE>
+					</environmentVariables>
 				</configuration>
 			</plugin>
 			<plugin>
